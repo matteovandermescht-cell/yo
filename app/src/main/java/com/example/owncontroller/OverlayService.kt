@@ -28,11 +28,20 @@ class OverlayService : Service() {
     private var autoPlayStatus: TextView? = null
     private var analysisStatus: TextView? = null
     private var analysisReceiverRegistered = false
+    private var ocrOverlay: OcrDetectionOverlay? = null
     private val analysisReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val state = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_STATE) ?: "UNKNOWN"
-            val message = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_MESSAGE) ?: "No live data"
-            analysisStatus?.text = "Live analysis [$state]: $message"
+            if (intent?.action == RealtimeScreenAnalysisService.ACTION_OCR_RESULTS) {
+                val lines = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_OCR_LINES).orEmpty()
+                val frameWidth = intent.getIntExtra(RealtimeScreenAnalysisService.EXTRA_FRAME_WIDTH, resources.displayMetrics.widthPixels)
+                val frameHeight = intent.getIntExtra(RealtimeScreenAnalysisService.EXTRA_FRAME_HEIGHT, resources.displayMetrics.heightPixels)
+                ensureOcrOverlay().update(lines, frameWidth, frameHeight)
+                analysisStatus?.text = if (lines.isBlank()) "Screen text recognition: no readable text" else "Screen text recognition: ${lines.lines().size} visible text line(s) marked"
+            } else {
+                val state = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_STATE) ?: "UNKNOWN"
+                val message = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_MESSAGE) ?: "No live data"
+                analysisStatus?.text = "Live analysis [$state]: $message"
+            }
         }
     }
 
@@ -50,7 +59,10 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        val filter = IntentFilter(RealtimeScreenAnalysisService.ACTION_STATUS)
+        val filter = IntentFilter().apply {
+            addAction(RealtimeScreenAnalysisService.ACTION_STATUS)
+            addAction(RealtimeScreenAnalysisService.ACTION_OCR_RESULTS)
+        }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(analysisReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else {
             @Suppress("DEPRECATION")
@@ -67,6 +79,25 @@ class OverlayService : Service() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun ensureOcrOverlay(): OcrDetectionOverlay {
+        ocrOverlay?.let { return it }
+        val view = OcrDetectionOverlay(this)
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+        windowManager.addView(view, params)
+        ocrOverlay = view
+        return view
+    }
 
     private fun showBubble() {
         val view = TextView(this).apply {
@@ -205,6 +236,8 @@ class OverlayService : Service() {
             analysisReceiverRegistered = false
         }
         removePanel()
+        ocrOverlay?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        ocrOverlay = null
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         bubble = null
         super.onDestroy()
