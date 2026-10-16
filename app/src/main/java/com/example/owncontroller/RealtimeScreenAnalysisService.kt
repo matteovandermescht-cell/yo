@@ -86,7 +86,7 @@ class RealtimeScreenAnalysisService : Service() {
                 frameCount++
                 analyzeFrame(image)
                 if (frameCount % 4L == 0L) {
-                    val frame = image
+                    val frame = image ?: return@setOnImageAvailableListener
                     val input = InputImage.fromMediaImage(frame, 0)
                     textRecognizer.process(input)
                         .addOnSuccessListener { result ->
