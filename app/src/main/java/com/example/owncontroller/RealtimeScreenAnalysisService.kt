@@ -216,7 +216,6 @@ class RealtimeScreenAnalysisService : Service() {
         imageReader = null
         try { projection?.stop() } catch (_: Exception) {}
         projection = null
-        try { textRecognizer.close() } catch (_: Exception) {}
         try { worker?.quitSafely() } catch (_: Exception) {}
         worker = null
         workerHandler = null
@@ -228,6 +227,7 @@ class RealtimeScreenAnalysisService : Service() {
     }
 
     override fun onDestroy() {
+        try { textRecognizer.close() } catch (_: Exception) {}
         stopCapture()
         super.onDestroy()
     }
