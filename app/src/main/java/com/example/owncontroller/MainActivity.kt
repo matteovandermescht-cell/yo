@@ -1,6 +1,7 @@
 package com.example.owncontroller
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -234,6 +235,9 @@ class MainActivity : Activity() {
         val reply = when {
             command in listOf("help", "hilfe", "?") -> "Commands: status; start analysis; stop analysis; open settings; enable overlay; disable overlay; what do you see?"
             command.contains("status") || command.contains("zustand") -> "Live analysis: " + realtimeReport.text + ". Overlay permission: " + (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))
+            command.contains("list objects") || command.contains("show objects") || command.contains("objekte") || command.contains("templates") ->
+                if (ObjectTemplateStore.labels(this).isEmpty()) "No screenshot object templates saved yet. Choose a screenshot and draw a rectangle around an object to teach it."
+                else "Saved screenshot object templates: " + ObjectTemplateStore.labels(this).joinToString(", ")
             command.contains("what do you see") || command.contains("was siehst") || command.contains("erkannt") ->
                 if (latestRecognizedText.isBlank()) "No readable screen text received yet. Start live analysis and approve screen capture first."
                 else "Latest recognized screen text:\n" + latestRecognizedText.lines().take(12).joinToString("\n") { it.substringAfter("|", it).take(100) }
@@ -313,13 +317,45 @@ class MainActivity : Activity() {
                 append("Color ranges are approximate. Compare with your screenshots and tune ImageColorAnalyzer.kt if needed.")
             }
             appendLog("Image analyzed: ${report.width}×${report.height}; green ${percent(report.greenFraction)}, red ${percent(report.redFraction)}.")
-            bitmap.recycle()
+            showObjectTrainingDialog(bitmap)
         } catch (e: Exception) {
             visualReport.text = "Image analysis failed: ${e.message ?: "unknown error"}"
             appendLog("Image analysis failed.")
         }
     }
 
+    private fun showObjectTrainingDialog(bitmap: android.graphics.Bitmap) {
+        val cropView = ScreenshotCropView(this, bitmap)
+        val labelInput = EditText(this).apply { hint = "Object name, e.g. bush"; setSingleLine(true) }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 8, 20, 8)
+            addView(cropView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.density * 360).toInt()))
+            addView(TextView(this@MainActivity).apply { text = "Drag around one object in the screenshot, then give it a name. The crop is saved only on this device."; textSize = 13f; setPadding(0, 8, 0, 4) })
+            addView(labelInput)
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("Teach an object from screenshot").setView(layout).setNegativeButton("Skip", null).setPositiveButton("Save object", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val label = labelInput.text.toString().trim()
+                val crop = cropView.cropSelection()
+                if (label.isBlank()) labelInput.error = "Enter an object name"
+                else if (crop == null) Toast.makeText(this, "Drag a rectangle around the object first.", Toast.LENGTH_LONG).show()
+                else {
+                    val saved = ObjectTemplateStore.save(this, label, crop)
+                    crop.recycle()
+                    if (saved) {
+                        visualReport.append("\nSaved screenshot template: " + label)
+                        appendLog("Saved local screenshot template: " + label)
+                        chatLog.append("\nController: Learned a screenshot template named '" + label + "'.")
+                        dialog.dismiss()
+                    } else Toast.makeText(this, "Could not save template. Try a larger selection and a short name.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        dialog.setOnDismissListener { if (!bitmap.isRecycled) bitmap.recycle() }
+        dialog.show()
+    }
     private fun percent(value: Float): String = String.format(java.util.Locale.US, "%.2f%%", value * 100f)
 
     private fun startOverlay() {
