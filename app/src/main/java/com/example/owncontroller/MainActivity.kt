@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.media.projection.MediaProjectionManager
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -25,20 +26,29 @@ class MainActivity : Activity() {
         private const val COMMAND_ACTION = "com.example.mygame.CONTROLLER_COMMAND"
         private const val STATUS_ACTION = "com.example.owncontroller.GAME_STATUS"
         private const val PICK_IMAGE_REQUEST = 4102
+        private const val SCREEN_CAPTURE_REQUEST = 4103
     }
 
     private lateinit var status: TextView
     private lateinit var log: TextView
     private lateinit var visualReport: TextView
     private lateinit var overlaySwitch: Switch
+    private lateinit var realtimeReport: TextView
     private var receiverRegistered = false
     private var pendingOverlayEnable = false
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val message = intent?.getStringExtra("status") ?: "Game replied without a status."
-            status.text = "Game status: $message"
-            appendLog("Reply: $message")
+            if (intent?.action == RealtimeScreenAnalysisService.ACTION_STATUS) {
+                val state = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_STATE) ?: "UNKNOWN"
+                val message = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_MESSAGE) ?: "No analysis status"
+                realtimeReport.text = "Live analysis [$state]: $message"
+                appendLog("Live analysis [$state]: $message")
+            } else {
+                val message = intent?.getStringExtra("status") ?: "Game replied without a status."
+                status.text = "Game status: $message"
+                appendLog("Reply: $message")
+            }
         }
     }
 
@@ -73,6 +83,14 @@ class MainActivity : Activity() {
             setPadding(0, 8, 0, 18)
         }
         content.addView(visualReport)
+        addButton(content, "Start live screen analysis") { requestRealtimeAnalysis() }
+        addButton(content, "Stop live screen analysis") { stopRealtimeAnalysis() }
+        realtimeReport = TextView(this).apply {
+            text = "Live analysis: stopped"
+            textSize = 14f
+            setPadding(0, 8, 0, 18)
+        }
+        content.addView(realtimeReport)
 
         content.addView(TextView(this).apply {
             text = "Overlay GUI"
@@ -131,6 +149,22 @@ class MainActivity : Activity() {
         setContentView(scroller)
     }
 
+    private fun requestRealtimeAnalysis() {
+        try {
+            val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            startActivityForResult(manager.createScreenCaptureIntent(), SCREEN_CAPTURE_REQUEST)
+        } catch (e: Exception) {
+            realtimeReport.text = "Cannot request screen capture: ${e.message ?: "unknown error"}"
+            appendLog("Could not request screen capture permission.")
+        }
+    }
+
+    private fun stopRealtimeAnalysis() {
+        stopService(Intent(this, RealtimeScreenAnalysisService::class.java).setAction(RealtimeScreenAnalysisService.ACTION_STOP))
+        realtimeReport.text = "Live analysis: stop requested"
+        appendLog("Live screen analysis stop requested.")
+    }
+
     private fun chooseImage() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -142,6 +176,27 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated by Android in favor of Activity Result APIs; retained for compatibility with this project.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == SCREEN_CAPTURE_REQUEST) {
+            if (resultCode == RESULT_OK && data != null) {
+                val serviceIntent = Intent(this, RealtimeScreenAnalysisService::class.java).apply {
+                    putExtra(RealtimeScreenAnalysisService.EXTRA_RESULT_CODE, resultCode)
+                    putExtra(RealtimeScreenAnalysisService.EXTRA_RESULT_DATA, data)
+                }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent)
+                    else startService(serviceIntent)
+                    realtimeReport.text = "Live analysis: starting…"
+                    appendLog("User granted screen capture; starting on-device analysis.")
+                } catch (e: Exception) {
+                    realtimeReport.text = "Live analysis failed to start: ${e.message ?: "unknown error"}"
+                    appendLog("Live analysis start failed.")
+                }
+            } else {
+                realtimeReport.text = "Live analysis: permission denied"
+                appendLog("Screen capture permission was not granted.")
+            }
+            return
+        }
         if (requestCode != PICK_IMAGE_REQUEST || resultCode != RESULT_OK) return
         val uri: Uri = data?.data ?: return
         try {
@@ -206,8 +261,10 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(STATUS_ACTION)
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(statusReceiver, filter, Context.RECEIVER_EXPORTED)
+        val filter = IntentFilter(STATUS_ACTION).apply {
+            addAction(RealtimeScreenAnalysisService.ACTION_STATUS)
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else {
             @Suppress("DEPRECATION")
             registerReceiver(statusReceiver, filter)
