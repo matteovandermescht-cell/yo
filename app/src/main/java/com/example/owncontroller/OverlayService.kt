@@ -1,7 +1,13 @@
 package com.example.owncontroller
 
 import android.app.Service
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -23,6 +29,37 @@ class OverlayService : Service() {
     private lateinit var panelParams: WindowManager.LayoutParams
     private var autoPlayEnabled = false
     private var autoPlayStatus: TextView? = null
+    private var analysisStatus: TextView? = null
+    private var analysisReceiverRegistered = false
+    private var ocrOverlay: OcrDetectionOverlay? = null
+    private var ruleWasMatching = false
+    private val analysisReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == RealtimeScreenAnalysisService.ACTION_OCR_RESULTS) {
+                val lines = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_OCR_LINES).orEmpty()
+                val frameWidth = intent.getIntExtra(RealtimeScreenAnalysisService.EXTRA_FRAME_WIDTH, resources.displayMetrics.widthPixels)
+                val frameHeight = intent.getIntExtra(RealtimeScreenAnalysisService.EXTRA_FRAME_HEIGHT, resources.displayMetrics.heightPixels)
+                ensureOcrOverlay().update(lines, frameWidth, frameHeight)
+                val trigger = CustomRuleStore.trigger(this@OverlayService)
+                val matched = trigger.isNotBlank() && lines.lineSequence().any { line ->
+                    line.substringAfter("|", "").contains(trigger, ignoreCase = true)
+                }
+                if (matched && !ruleWasMatching) {
+                    runCustomRule(trigger)
+                }
+                ruleWasMatching = matched
+                analysisStatus?.text = when {
+                    matched -> "CUSTOM ACTION: matched \"$trigger\""
+                    lines.isBlank() -> "Screen text recognition: no readable text"
+                    else -> "Screen text recognition: ${lines.lines().size} visible text line(s) marked"
+                }
+            } else {
+                val state = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_STATE) ?: "UNKNOWN"
+                val message = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_MESSAGE) ?: "No live data"
+                analysisStatus?.text = "Live analysis [$state]: $message"
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -38,6 +75,16 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        val filter = IntentFilter().apply {
+            addAction(RealtimeScreenAnalysisService.ACTION_STATUS)
+            addAction(RealtimeScreenAnalysisService.ACTION_OCR_RESULTS)
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(analysisReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        else {
+            @Suppress("DEPRECATION")
+            registerReceiver(analysisReceiver, filter)
+        }
+        analysisReceiverRegistered = true
     }
 
     private fun overlayType(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -48,6 +95,46 @@ class OverlayService : Service() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun ensureOcrOverlay(): OcrDetectionOverlay {
+        ocrOverlay?.let { return it }
+        val view = OcrDetectionOverlay(this)
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+        windowManager.addView(view, params)
+        ocrOverlay = view
+        return view
+    }
+
+    private fun runCustomRule(trigger: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        val channelId = "custom_visual_rule"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "Custom visual rules", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, channelId)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }.setSmallIcon(android.R.drawable.ic_menu_view)
+            .setContentTitle("Own Game Controller · rule matched")
+            .setContentText("Recognized on screen: $trigger".take(120))
+            .setAutoCancel(true)
+            .build()
+        manager.notify(5201, notification)
+    }
 
     private fun showBubble() {
         val view = TextView(this).apply {
@@ -122,6 +209,23 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(8))
         }
         layout.addView(autoPlayStatus)
+        analysisStatus = TextView(this).apply {
+            text = "Live analysis: stopped"
+            textSize = 12f
+            setTextColor(Color.DKGRAY)
+            setPadding(0, 0, 0, dp(10))
+        }
+        layout.addView(analysisStatus)
+        layout.addView(Button(this).apply {
+            text = "Start live analysis"
+            setOnClickListener {
+                startActivity(Intent(this@OverlayService, MainActivity::class.java).apply {
+                    action = ACTION_REQUEST_ANALYSIS
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+                analysisStatus?.text = "Live analysis: open app to grant screen-capture permission"
+            }
+        })
         layout.addView(Button(this).apply {
             text = if (autoPlayEnabled) "Stop Auto Play" else "Enable Auto Play"
             setOnClickListener {
@@ -164,7 +268,13 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        if (analysisReceiverRegistered) {
+            try { unregisterReceiver(analysisReceiver) } catch (_: Exception) {}
+            analysisReceiverRegistered = false
+        }
         removePanel()
+        ocrOverlay?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        ocrOverlay = null
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         bubble = null
         super.onDestroy()
@@ -172,5 +282,6 @@ class OverlayService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.example.owncontroller.STOP_OVERLAY"
+        const val ACTION_REQUEST_ANALYSIS = "com.example.owncontroller.REQUEST_ANALYSIS"
     }
 }
