@@ -19,6 +19,9 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.view.WindowManager
 import android.graphics.Color
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlin.math.max
 
 /**
@@ -33,6 +36,7 @@ class RealtimeScreenAnalysisService : Service() {
     private var workerHandler: Handler? = null
     private var lastBroadcastAt = 0L
     private var frameCount = 0L
+    private val textRecognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -81,6 +85,28 @@ class RealtimeScreenAnalysisService : Service() {
                 image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
                 frameCount++
                 analyzeFrame(image)
+                if (frameCount % 4L == 0L) {
+                    val frame = image
+                    val input = InputImage.fromMediaImage(frame, 0)
+                    textRecognizer.process(input)
+                        .addOnSuccessListener { result ->
+                            val encoded = result.textBlocks.flatMap { block ->
+                                block.lines.mapNotNull { line ->
+                                    val box = line.boundingBox ?: return@mapNotNull null
+                                    val clean = line.text.replace("|", " ").replace("\n", " ").take(90)
+                                    "${box.left},${box.top},${box.right},${box.bottom}|$clean"
+                                }
+                            }.take(40).joinToString("\n")
+                            publishDetections(encoded, frame.width, frame.height)
+                        }
+                        .addOnFailureListener { error ->
+                            publish("OCR_WARNING", "Text recognition failed: ${error.message ?: "unknown error"}")
+                        }
+                        .addOnCompleteListener {
+                            frame.close()
+                        }
+                    image = null
+                }
             } catch (e: Exception) {
                 publish("ERROR", "Frame analysis failed: ${e.message ?: "unknown error"}")
             } finally {
@@ -148,6 +174,16 @@ class RealtimeScreenAnalysisService : Service() {
         }
     }
 
+    private fun publishDetections(encoded: String, width: Int, height: Int) {
+        sendBroadcast(Intent(ACTION_OCR_RESULTS).setPackage(packageName).apply {
+            putExtra(EXTRA_OCR_LINES, encoded)
+            putExtra(EXTRA_FRAME_WIDTH, width)
+            putExtra(EXTRA_FRAME_HEIGHT, height)
+        })
+        if (encoded.isBlank()) publish("RUNNING", "OCR active: no readable text detected")
+        else publish("RUNNING", "OCR detected ${encoded.lines().size} text line(s); showing screen labels")
+    }
+
     private fun pct(count: Long, total: Long): String =
         if (total == 0L) "0.0" else String.format(java.util.Locale.US, "%.1f", count * 100.0 / total)
 
@@ -180,6 +216,7 @@ class RealtimeScreenAnalysisService : Service() {
         imageReader = null
         try { projection?.stop() } catch (_: Exception) {}
         projection = null
+        try { textRecognizer.close() } catch (_: Exception) {}
         try { worker?.quitSafely() } catch (_: Exception) {}
         worker = null
         workerHandler = null
@@ -198,6 +235,10 @@ class RealtimeScreenAnalysisService : Service() {
     companion object {
         const val ACTION_STOP = "com.example.owncontroller.STOP_REALTIME_ANALYSIS"
         const val ACTION_STATUS = "com.example.owncontroller.REALTIME_ANALYSIS_STATUS"
+        const val ACTION_OCR_RESULTS = "com.example.owncontroller.OCR_RESULTS"
+        const val EXTRA_OCR_LINES = "ocr_lines"
+        const val EXTRA_FRAME_WIDTH = "frame_width"
+        const val EXTRA_FRAME_HEIGHT = "frame_height"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_STATE = "state"
