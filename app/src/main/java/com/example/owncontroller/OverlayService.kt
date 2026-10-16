@@ -1,6 +1,9 @@
 package com.example.owncontroller
 
 import android.app.Service
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -29,6 +32,7 @@ class OverlayService : Service() {
     private var analysisStatus: TextView? = null
     private var analysisReceiverRegistered = false
     private var ocrOverlay: OcrDetectionOverlay? = null
+    private var ruleWasMatching = false
     private val analysisReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == RealtimeScreenAnalysisService.ACTION_OCR_RESULTS) {
@@ -36,7 +40,19 @@ class OverlayService : Service() {
                 val frameWidth = intent.getIntExtra(RealtimeScreenAnalysisService.EXTRA_FRAME_WIDTH, resources.displayMetrics.widthPixels)
                 val frameHeight = intent.getIntExtra(RealtimeScreenAnalysisService.EXTRA_FRAME_HEIGHT, resources.displayMetrics.heightPixels)
                 ensureOcrOverlay().update(lines, frameWidth, frameHeight)
-                analysisStatus?.text = if (lines.isBlank()) "Screen text recognition: no readable text" else "Screen text recognition: ${lines.lines().size} visible text line(s) marked"
+                val trigger = CustomRuleStore.trigger(this@OverlayService)
+                val matched = trigger.isNotBlank() && lines.lineSequence().any { line ->
+                    line.substringAfter("|", "").contains(trigger, ignoreCase = true)
+                }
+                if (matched && !ruleWasMatching) {
+                    runCustomRule(trigger)
+                }
+                ruleWasMatching = matched
+                analysisStatus?.text = when {
+                    matched -> "CUSTOM ACTION: matched \"$trigger\""
+                    lines.isBlank() -> "Screen text recognition: no readable text"
+                    else -> "Screen text recognition: ${lines.lines().size} visible text line(s) marked"
+                }
             } else {
                 val state = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_STATE) ?: "UNKNOWN"
                 val message = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_MESSAGE) ?: "No live data"
@@ -97,6 +113,27 @@ class OverlayService : Service() {
         windowManager.addView(view, params)
         ocrOverlay = view
         return view
+    }
+
+    private fun runCustomRule(trigger: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        val channelId = "custom_visual_rule"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "Custom visual rules", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, channelId)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }.setSmallIcon(android.R.drawable.ic_menu_view)
+            .setContentTitle("Own Game Controller · rule matched")
+            .setContentText("Recognized on screen: $trigger".take(120))
+            .setAutoCancel(true)
+            .build()
+        manager.notify(5201, notification)
     }
 
     private fun showBubble() {
