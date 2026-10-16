@@ -39,7 +39,14 @@ class MainActivity : Activity() {
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == RealtimeScreenAnalysisService.ACTION_STATUS) {
+            if (intent?.action == RealtimeScreenAnalysisService.ACTION_OCR_RESULTS) {
+                val lines = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_OCR_LINES).orEmpty()
+                realtimeReport.text = if (lines.isBlank()) {
+                    "On-device text recognition: no readable text detected"
+                } else {
+                    "On-device text recognition: ${lines.lines().size} visible text line(s) detected"
+                }
+            } else if (intent?.action == RealtimeScreenAnalysisService.ACTION_STATUS) {
                 val state = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_STATE) ?: "UNKNOWN"
                 val message = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_MESSAGE) ?: "No analysis status"
                 realtimeReport.text = "Live analysis [$state]: $message"
@@ -266,6 +273,7 @@ class MainActivity : Activity() {
         super.onStart()
         val filter = IntentFilter(STATUS_ACTION).apply {
             addAction(RealtimeScreenAnalysisService.ACTION_STATUS)
+            addAction(RealtimeScreenAnalysisService.ACTION_OCR_RESULTS)
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else {
