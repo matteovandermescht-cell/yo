@@ -1,0 +1,8 @@
+<!-- Add this receiver inside the <application> tag of YOUR game manifest. -->
+<receiver
+    android:name=".GameCommandReceiver"
+    android:exported="true">
+    <intent-filter>
+        <action android:name="com.example.mygame.CONTROLLER_COMMAND" />
+    </intent-filter>
+</receiver>
