@@ -94,6 +94,7 @@ class MainActivity : Activity() {
         }
         content.addView(visualReport)
         addButton(content, "Start live screen analysis") { requestRealtimeAnalysis() }
+        addButton(content, "Open required Android settings") { openRequiredSettings() }
         addButton(content, "Stop live screen analysis") { stopRealtimeAnalysis() }
         realtimeReport = TextView(this).apply {
             text = "Live analysis: stopped"
@@ -288,6 +289,22 @@ class MainActivity : Activity() {
     private fun stopOverlay() {
         stopService(Intent(this, OverlayService::class.java))
         appendLog("Overlay GUI disabled; floating menu service stopped.")
+    }
+
+    private fun openRequiredSettings() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                openOverlaySettings()
+                Toast.makeText(this, "Allow display over other apps, then return to Own Game Controller.", Toast.LENGTH_LONG).show()
+            } else {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                startActivity(intent)
+                Toast.makeText(this, "Check app permissions and notifications. Screen capture is approved separately when you tap Start live screen analysis.", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            appendLog("Could not open Android settings: ${e.message ?: "unknown error"}")
+            try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {}
+        }
     }
 
     private fun openOverlaySettings() {
