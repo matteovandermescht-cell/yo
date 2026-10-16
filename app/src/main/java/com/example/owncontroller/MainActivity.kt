@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -22,10 +23,12 @@ class MainActivity : Activity() {
         private const val TARGET_GAME_PACKAGE = "com.example.mygame"
         private const val COMMAND_ACTION = "com.example.mygame.CONTROLLER_COMMAND"
         private const val STATUS_ACTION = "com.example.owncontroller.GAME_STATUS"
+        private const val PICK_IMAGE_REQUEST = 4102
     }
 
     private lateinit var status: TextView
     private lateinit var log: TextView
+    private lateinit var visualReport: TextView
     private var receiverRegistered = false
 
     private val statusReceiver = object : BroadcastReceiver() {
@@ -50,10 +53,25 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
         })
         content.addView(TextView(this).apply {
-            text = "Setup and test controls for your own compatible game."
+            text = "Offline visual analysis for screenshots. Select an image to measure green and red pixel regions."
             textSize = 15f
             setPadding(0, 8, 0, 18)
         })
+
+        content.addView(TextView(this).apply {
+            text = "Visual recognition"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 4, 0, 8)
+        })
+        addButton(content, "Choose screenshot to analyze") { chooseImage() }
+        visualReport = TextView(this).apply {
+            text = "No image analyzed yet."
+            textSize = 14f
+            setPadding(0, 8, 0, 18)
+        }
+        content.addView(visualReport)
+
         content.addView(TextView(this).apply {
             text = "Overlay setup"
             textSize = 18f
@@ -90,11 +108,46 @@ class MainActivity : Activity() {
         })
         log = TextView(this).apply {
             textSize = 13f
-            text = "Ready. The floating menu is display-only."
+            text = "Ready. Image analysis is offline and does not send controls to a game."
         }
         content.addView(log)
         setContentView(scroller)
     }
+
+    private fun chooseImage() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        startActivityForResult(intent, PICK_IMAGE_REQUEST)
+    }
+
+    @Deprecated("Deprecated by Android in favor of Activity Result APIs; retained for compatibility with this project.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != PICK_IMAGE_REQUEST || resultCode != RESULT_OK) return
+        val uri: Uri = data?.data ?: return
+        try {
+            val bitmap = contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input)
+            } ?: throw IllegalArgumentException("Could not decode selected image")
+            val report = ImageColorAnalyzer.analyze(bitmap, sampleStep = maxOf(1, maxOf(bitmap.width, bitmap.height) / 900))
+            visualReport.text = buildString {
+                append("Image: ${report.width} × ${report.height}\n")
+                append("Analyzed samples: ${report.totalPixels}\n")
+                append("Green-like pixels: ${report.greenPixels} (${percent(report.greenFraction)})\n")
+                append("Red-like pixels: ${report.redPixels} (${percent(report.redFraction)})\n\n")
+                append("Color ranges are approximate. Compare with your screenshots and tune ImageColorAnalyzer.kt if needed.")
+            }
+            appendLog("Image analyzed: ${report.width}×${report.height}; green ${percent(report.greenFraction)}, red ${percent(report.redFraction)}.")
+            bitmap.recycle()
+        } catch (e: Exception) {
+            visualReport.text = "Image analysis failed: ${e.message ?: "unknown error"}"
+            appendLog("Image analysis failed.")
+        }
+    }
+
+    private fun percent(value: Float): String = String.format(java.util.Locale.US, "%.2f%%", value * 100f)
 
     private fun startOverlay() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
