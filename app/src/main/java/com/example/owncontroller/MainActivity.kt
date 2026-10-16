@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 
@@ -29,7 +30,9 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var log: TextView
     private lateinit var visualReport: TextView
+    private lateinit var overlaySwitch: Switch
     private var receiverRegistered = false
+    private var pendingOverlayEnable = false
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -57,7 +60,6 @@ class MainActivity : Activity() {
             textSize = 15f
             setPadding(0, 8, 0, 18)
         })
-
         content.addView(TextView(this).apply {
             text = "Visual recognition"
             textSize = 18f
@@ -73,22 +75,37 @@ class MainActivity : Activity() {
         content.addView(visualReport)
 
         content.addView(TextView(this).apply {
-            text = "Overlay setup"
+            text = "Overlay GUI"
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, 4, 0, 8)
         })
         content.addView(TextView(this).apply {
-            text = "Allow this app to appear over other apps, then use Show floating menu. The menu is a movable display-only overlay."
+            text = "Enable the movable, display-only floating menu. Android may ask you to grant Display over other apps permission."
             textSize = 14f
             setPadding(0, 0, 0, 8)
         })
-        addButton(content, "Set up 'Display over other apps'") { openOverlaySettings() }
-        addButton(content, "Show floating menu") { startOverlay() }
-        addButton(content, "Hide floating menu") {
-            stopService(Intent(this, OverlayService::class.java))
-            appendLog("Floating menu stopped.")
+        overlaySwitch = Switch(this).apply {
+            text = "Overlay GUI aktivieren"
+            isChecked = false
+            setOnCheckedChangeListener { _, enabled ->
+                if (enabled) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this@MainActivity)) {
+                        pendingOverlayEnable = true
+                        isChecked = false
+                        openOverlaySettings()
+                        Toast.makeText(this@MainActivity, "Grant overlay permission, then return here.", Toast.LENGTH_LONG).show()
+                    } else startOverlay()
+                } else {
+                    pendingOverlayEnable = false
+                    stopOverlay()
+                }
+            }
         }
+        content.addView(overlaySwitch, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = 10 })
 
         status = TextView(this).apply {
             text = "Game status: waiting for a reply"
@@ -151,16 +168,24 @@ class MainActivity : Activity() {
 
     private fun startOverlay() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Please enable Display over other apps first.", Toast.LENGTH_LONG).show()
+            pendingOverlayEnable = true
+            overlaySwitch.isChecked = false
             openOverlaySettings()
             return
         }
         try {
             startService(Intent(this, OverlayService::class.java))
-            appendLog("Floating menu started. Tap the OGC bubble to open or close the menu; drag it to move it.")
+            pendingOverlayEnable = false
+            appendLog("Display-only floating menu enabled.")
         } catch (e: Exception) {
+            overlaySwitch.isChecked = false
             appendLog("Could not start overlay: ${e.message ?: "unknown error"}")
         }
+    }
+
+    private fun stopOverlay() {
+        stopService(Intent(this, OverlayService::class.java))
+        appendLog("Overlay GUI disabled; floating menu service stopped.")
     }
 
     private fun openOverlaySettings() {
@@ -170,6 +195,13 @@ class MainActivity : Activity() {
             catch (_: Exception) { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) }
             appendLog("Opened Android overlay permission settings. Enable permission there, then return to this app.")
         } else appendLog("This Android version does not require the overlay permission screen.")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pendingOverlayEnable && (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))) {
+            overlaySwitch.isChecked = true
+        }
     }
 
     override fun onStart() {
@@ -192,8 +224,15 @@ class MainActivity : Activity() {
     }
 
     private fun addButton(parent: LinearLayout, title: String, action: () -> Unit) {
-        val button = Button(this).apply { text = title; isAllCaps = false; setOnClickListener { action() } }
-        parent.addView(button, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 6 })
+        val button = Button(this).apply {
+            text = title
+            isAllCaps = false
+            setOnClickListener { action() }
+        }
+        parent.addView(button, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = 6 })
     }
 
     private fun sendCommand(command: String) {
@@ -211,5 +250,7 @@ class MainActivity : Activity() {
         appendLog("Sent command: $command")
     }
 
-    private fun appendLog(message: String) { log.append("\n$message") }
+    private fun appendLog(message: String) {
+        log.append("\n$message")
+    }
 }
