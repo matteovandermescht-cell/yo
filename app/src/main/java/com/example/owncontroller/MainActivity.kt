@@ -147,6 +147,9 @@ class MainActivity : Activity() {
         }
         content.addView(log)
         setContentView(scroller)
+        if (intent?.action == OverlayService.ACTION_REQUEST_ANALYSIS) {
+            requestRealtimeAnalysis()
+        }
     }
 
     private fun requestRealtimeAnalysis() {
