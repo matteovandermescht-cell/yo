@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -49,14 +51,30 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
         })
         content.addView(TextView(this).apply {
-            text = "Sends named test commands only to your configured game package."
+            text = "Setup and test controls for your own compatible game."
             textSize = 15f
             setPadding(0, 8, 0, 18)
         })
+
+        content.addView(TextView(this).apply {
+            text = "Overlay setup"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 4, 0, 8)
+        })
+        content.addView(TextView(this).apply {
+            text = "Use the button below to open the exact Android setting for allowing this app to appear over other apps. Turn it on there, then return here."
+            textSize = 14f
+            setPadding(0, 0, 0, 8)
+        })
+        addButton(content, "Set up 'Display over other apps'") {
+            openOverlaySettings()
+        }
+
         status = TextView(this).apply {
             text = "Game status: waiting for a reply"
             textSize = 16f
-            setPadding(0, 8, 0, 16)
+            setPadding(0, 16, 0, 16)
         }
         content.addView(status)
 
@@ -73,10 +91,27 @@ class MainActivity : Activity() {
         })
         log = TextView(this).apply {
             textSize = 13f
-            text = "Ready. Configure TARGET_GAME_PACKAGE in MainActivity.kt."
+            text = "Ready. Configure TARGET_GAME_PACKAGE in MainActivity.kt for a compatible game."
         }
         content.addView(log)
         setContentView(scroller)
+    }
+
+    private fun openOverlaySettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            try {
+                startActivity(intent)
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+            }
+            appendLog("Opened Android overlay permission settings. Enable permission there, then return to this app.")
+        } else {
+            appendLog("This Android version does not require the overlay permission screen.")
+        }
     }
 
     override fun onStart() {
