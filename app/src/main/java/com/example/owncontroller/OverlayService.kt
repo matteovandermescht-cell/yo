@@ -2,6 +2,9 @@ package com.example.owncontroller
 
 import android.app.Service
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -23,6 +26,15 @@ class OverlayService : Service() {
     private lateinit var panelParams: WindowManager.LayoutParams
     private var autoPlayEnabled = false
     private var autoPlayStatus: TextView? = null
+    private var analysisStatus: TextView? = null
+    private var analysisReceiverRegistered = false
+    private val analysisReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val state = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_STATE) ?: "UNKNOWN"
+            val message = intent?.getStringExtra(RealtimeScreenAnalysisService.EXTRA_MESSAGE) ?: "No live data"
+            analysisStatus?.text = "Live analysis [$state]: $message"
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -38,6 +50,13 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        val filter = IntentFilter(RealtimeScreenAnalysisService.ACTION_STATUS)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(analysisReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        else {
+            @Suppress("DEPRECATION")
+            registerReceiver(analysisReceiver, filter)
+        }
+        analysisReceiverRegistered = true
     }
 
     private fun overlayType(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -122,6 +141,23 @@ class OverlayService : Service() {
             setPadding(0, 0, 0, dp(8))
         }
         layout.addView(autoPlayStatus)
+        analysisStatus = TextView(this).apply {
+            text = "Live analysis: stopped"
+            textSize = 12f
+            setTextColor(Color.DKGRAY)
+            setPadding(0, 0, 0, dp(10))
+        }
+        layout.addView(analysisStatus)
+        layout.addView(Button(this).apply {
+            text = "Start live analysis"
+            setOnClickListener {
+                sendBroadcast(Intent(this@OverlayService, MainActivity::class.java).apply {
+                    action = ACTION_REQUEST_ANALYSIS
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+                analysisStatus?.text = "Live analysis: open app to grant screen-capture permission"
+            }
+        })
         layout.addView(Button(this).apply {
             text = if (autoPlayEnabled) "Stop Auto Play" else "Enable Auto Play"
             setOnClickListener {
@@ -164,6 +200,10 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        if (analysisReceiverRegistered) {
+            try { unregisterReceiver(analysisReceiver) } catch (_: Exception) {}
+            analysisReceiverRegistered = false
+        }
         removePanel()
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         bubble = null
@@ -172,5 +212,6 @@ class OverlayService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.example.owncontroller.STOP_OVERLAY"
+        const val ACTION_REQUEST_ANALYSIS = "com.example.owncontroller.REQUEST_ANALYSIS"
     }
 }
