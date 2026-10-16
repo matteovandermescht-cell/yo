@@ -37,6 +37,9 @@ class MainActivity : Activity() {
     private lateinit var realtimeReport: TextView
     private lateinit var customRuleInput: EditText
     private lateinit var customRuleStatus: TextView
+    private lateinit var chatLog: TextView
+    private lateinit var chatInput: EditText
+    private var latestRecognizedText = ""
     private var receiverRegistered = false
     private var pendingOverlayEnable = false
 
@@ -44,6 +47,7 @@ class MainActivity : Activity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == RealtimeScreenAnalysisService.ACTION_OCR_RESULTS) {
                 val lines = intent.getStringExtra(RealtimeScreenAnalysisService.EXTRA_OCR_LINES).orEmpty()
+                latestRecognizedText = lines
                 realtimeReport.text = if (lines.isBlank()) {
                     "On-device text recognition: no readable text detected"
                 } else {
@@ -191,12 +195,61 @@ class MainActivity : Activity() {
             text = "Ready. Image analysis is offline and does not send controls to a game."
         }
         content.addView(log)
+
+        content.addView(TextView(this).apply {
+            text = "Local assistant chat"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 18, 0, 8)
+        })
+        content.addView(TextView(this).apply {
+            text = "Chat runs on this phone and controls only this app. Try: status, start analysis, stop analysis, open settings, enable overlay, disable overlay, what do you see?, help."
+            textSize = 13f
+            setPadding(0, 0, 0, 8)
+        })
+        chatLog = TextView(this).apply {
+            textSize = 14f
+            text = "Controller: Ready. Type help to see local commands."
+            setPadding(0, 8, 0, 12)
+        }
+        content.addView(chatLog)
+        chatInput = EditText(this).apply { hint = "Type a command or question"; setSingleLine(true) }
+        content.addView(chatInput)
+        addButton(content, "Send to controller") {
+            val message = chatInput.text.toString().trim()
+            if (message.isNotEmpty()) {
+                chatLog.append("\nYou: $message")
+                chatInput.text.clear()
+                handleLocalChatCommand(message)
+            }
+        }
         setContentView(scroller)
         if (intent?.action == OverlayService.ACTION_REQUEST_ANALYSIS) {
             requestRealtimeAnalysis()
         }
     }
 
+    private fun handleLocalChatCommand(raw: String) {
+        val command = raw.trim().lowercase(java.util.Locale.ROOT)
+        val reply = when {
+            command in listOf("help", "hilfe", "?") -> "Commands: status; start analysis; stop analysis; open settings; enable overlay; disable overlay; what do you see?"
+            command.contains("status") || command.contains("zustand") -> "Live analysis: " + realtimeReport.text + ". Overlay permission: " + (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))
+            command.contains("what do you see") || command.contains("was siehst") || command.contains("erkannt") ->
+                if (latestRecognizedText.isBlank()) "No readable screen text received yet. Start live analysis and approve screen capture first."
+                else "Latest recognized screen text:\n" + latestRecognizedText.lines().take(12).joinToString("\n") { it.substringAfter("|", it).take(100) }
+            command.contains("start") && (command.contains("analysis") || command.contains("analyse")) -> { requestRealtimeAnalysis(); "Android's screen-capture confirmation opened. Accept it to start local analysis." }
+            (command.contains("stop") || command.contains("beend")) && (command.contains("analysis") || command.contains("analyse") || command.contains("live")) -> { stopRealtimeAnalysis(); "Stop requested for live screen analysis." }
+            command.contains("settings") || command.contains("einstellung") || command.contains("berechtigung") -> { openRequiredSettings(); "Opened relevant Android settings. Grant only permissions you want to allow, then return to the app." }
+            (command.contains("enable") || command.contains("aktivier") || command.contains("start")) && command.contains("overlay") -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) { openOverlaySettings(); "Overlay permission settings opened. Enable 'Display over other apps', then return." }
+                else { startOverlay(); "Floating menu start requested." }
+            }
+            (command.contains("disable") || command.contains("deaktivier") || command.contains("stop")) && command.contains("overlay") -> { stopOverlay(); "Floating menu stopped." }
+            else -> "I don't know that command yet. Type help for supported commands."
+        }
+        chatLog.append("\nController: " + reply)
+        appendLog("Chat command: " + raw)
+    }
     private fun requestRealtimeAnalysis() {
         try {
             val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
