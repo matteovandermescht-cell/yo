@@ -151,7 +151,7 @@ class OverlayService : Service() {
         layout.addView(Button(this).apply {
             text = "Start live analysis"
             setOnClickListener {
-                sendBroadcast(Intent(this@OverlayService, MainActivity::class.java).apply {
+                startActivity(Intent(this@OverlayService, MainActivity::class.java).apply {
                     action = ACTION_REQUEST_ANALYSIS
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 })
