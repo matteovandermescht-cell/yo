@@ -19,7 +19,6 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.view.WindowManager
 import android.graphics.Color
-import androidx.core.app.NotificationCompat
 import kotlin.math.max
 
 /**
@@ -165,7 +164,7 @@ class RealtimeScreenAnalysisService : Service() {
             val channel = NotificationChannel(channelId, "Live QA screen analysis", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
-        return NotificationCompat.Builder(this, channelId)
+        return Notification.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentTitle("Own Game Controller")
             .setContentText(message.take(120))
