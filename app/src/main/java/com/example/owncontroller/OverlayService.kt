@@ -21,6 +21,8 @@ class OverlayService : Service() {
     private var panel: View? = null
     private lateinit var bubbleParams: WindowManager.LayoutParams
     private lateinit var panelParams: WindowManager.LayoutParams
+    private var autoPlayEnabled = false
+    private var autoPlayStatus: TextView? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -108,10 +110,32 @@ class OverlayService : Service() {
             setTextColor(Color.BLACK)
         })
         layout.addView(TextView(this).apply {
-            text = "Floating menu active · display only"
+            text = "Live vision · own-game prototype"
             textSize = 13f
             setTextColor(Color.DKGRAY)
             setPadding(0, dp(6), 0, dp(8))
+        })
+        autoPlayStatus = TextView(this).apply {
+            text = "Auto Play: not connected to a game"
+            textSize = 12f
+            setTextColor(Color.rgb(150, 70, 20))
+            setPadding(0, 0, 0, dp(8))
+        }
+        layout.addView(autoPlayStatus)
+        layout.addView(Button(this).apply {
+            text = if (autoPlayEnabled) "Stop Auto Play" else "Enable Auto Play"
+            setOnClickListener {
+                autoPlayEnabled = !autoPlayEnabled
+                text = if (autoPlayEnabled) "Stop Auto Play" else "Enable Auto Play"
+                autoPlayStatus?.text = if (autoPlayEnabled) {
+                    "Requested · game bridge and live input are not connected"
+                } else {
+                    "Stopped · no game actions are being sent"
+                }
+                autoPlayStatus?.setTextColor(
+                    if (autoPlayEnabled) Color.rgb(150, 70, 20) else Color.DKGRAY
+                )
+            }
         })
         layout.addView(Button(this).apply {
             text = "Close menu"
@@ -136,6 +160,7 @@ class OverlayService : Service() {
     private fun removePanel() {
         panel?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         panel = null
+        autoPlayStatus = null
     }
 
     override fun onDestroy() {
