@@ -14,6 +14,7 @@ import android.provider.Settings
 import android.media.projection.MediaProjectionManager
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -34,6 +35,8 @@ class MainActivity : Activity() {
     private lateinit var visualReport: TextView
     private lateinit var overlaySwitch: Switch
     private lateinit var realtimeReport: TextView
+    private lateinit var customRuleInput: EditText
+    private lateinit var customRuleStatus: TextView
     private var receiverRegistered = false
     private var pendingOverlayEnable = false
 
@@ -98,6 +101,40 @@ class MainActivity : Activity() {
             setPadding(0, 8, 0, 18)
         }
         content.addView(realtimeReport)
+
+        content.addView(TextView(this).apply {
+            text = "Custom visual rule"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 4, 0, 8)
+        })
+        content.addView(TextView(this).apply {
+            text = "Enter text that should trigger an action when it appears visibly on screen. Example: LEVEL COMPLETE"
+            textSize = 14f
+            setPadding(0, 0, 0, 8)
+        })
+        customRuleInput = EditText(this).apply {
+            hint = "Text to recognize"
+            setSingleLine(true)
+            setText(CustomRuleStore.trigger(this@MainActivity))
+        }
+        content.addView(customRuleInput)
+        addButton(content, "Save rule: notify when text appears") {
+            val trigger = customRuleInput.text.toString().trim()
+            if (trigger.length < 2) {
+                customRuleStatus.text = "Enter at least 2 characters."
+            } else {
+                CustomRuleStore.save(this, trigger)
+                customRuleStatus.text = "Saved: notify when \"$trigger\" appears"
+                appendLog("Custom visual rule saved.")
+            }
+        }
+        customRuleStatus = TextView(this).apply {
+            text = "Saved rule: " + (CustomRuleStore.trigger(this@MainActivity).ifBlank { "none" })
+            textSize = 14f
+            setPadding(0, 8, 0, 18)
+        }
+        content.addView(customRuleStatus)
 
         content.addView(TextView(this).apply {
             text = "Overlay GUI"
